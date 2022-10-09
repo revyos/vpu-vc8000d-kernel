@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 #include "hantrodec.h"
 #include "dwl_defs.h"
 
@@ -1918,13 +1917,55 @@ void hantrodec_disable_clk(unsigned long value) {
 }
 #endif
 
+static int mmap_cmdbuf_mem(struct file *file, struct vm_area_struct *vma)
+{
+   size_t size = vma->vm_end - vma->vm_start;
+	 phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
+
+	/* Does it even fit in phys_addr_t? */
+	if (offset >> PAGE_SHIFT != vma->vm_pgoff)
+		return -EINVAL;
+
+	/* It's illegal to wrap around the end of the physical address space. */
+	if (offset + (phys_addr_t)size - 1 < offset)
+		return -EINVAL;
+
+
+	vma->vm_page_prot = phys_mem_access_prot(file, vma->vm_pgoff,
+						 size,
+						 vma->vm_page_prot);
+
+	/* Remap-pfn-range will mark the range VM_IO */
+	if (remap_pfn_range(vma,
+			    vma->vm_start,
+			    vma->vm_pgoff,
+			    size,
+			    vma->vm_page_prot)) {
+		return -EAGAIN;
+	}
+
+	return 0; 
+}
+
+static int mmap_mem(struct file *file, struct vm_area_struct *vma)
+{
+   size_t size = vma->vm_end - vma->vm_start;
+   phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
+
+   if (hantro_cmdbuf_range(offset,size)){
+      return mmap_cmdbuf_mem(file,vma); 
+   }else{
+      return allocator_mmap(file,vma);
+   }
+}
+
 /* VFS methods */
 static struct file_operations hantrodec_fops = {
   .owner = THIS_MODULE,
   .open = hantrodec_open,
   .release = hantrodec_release,
   .unlocked_ioctl = hantrodec_ioctl,
-  .mmap = allocator_mmap,
+  .mmap = mmap_mem,
   .fasync = NULL
 };
 

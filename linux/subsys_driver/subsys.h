@@ -152,6 +152,7 @@ long hantrovcmd_ioctl(struct file *filp,
 int hantrovcmd_init(struct platform_device *pdev);
 void hantrovcmd_cleanup(struct platform_device *pdev);
 void hantrovcmd_reset(void);
+bool hantro_cmdbuf_range(addr_t addr,size_t size);
 
 /******************************************************************************/
 /* MMU */

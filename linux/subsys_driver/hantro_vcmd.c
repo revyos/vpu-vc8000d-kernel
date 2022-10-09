@@ -4031,3 +4031,12 @@ void hantrovcmd_reset(void)
     vcmd_reset_asic(hantrovcmd_data);
   }
 }
+
+bool hantro_cmdbuf_range(addr_t addr,size_t size){
+   bool bInRange;
+
+   bInRange = (addr >= vcmd_buf_mem_pool.busAddress && (addr - vcmd_buf_mem_pool.busAddress  + size) <= CMDBUF_POOL_TOTAL_SIZE) ||
+              (addr >= vcmd_status_buf_mem_pool.busAddress && (addr - vcmd_status_buf_mem_pool.busAddress  + size) <= CMDBUF_POOL_TOTAL_SIZE);
+    
+  return bInRange;
+}
