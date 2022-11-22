@@ -1942,7 +1942,7 @@ static unsigned int wait_cmdbuf_ready(struct file *filp,u16 cmdbuf_id,u32 *irq_s
         return -ERESTARTSYS;
     }
 
-    pr_info("filp=%p, VCMD Wait    CMDBUF [%d]\n", (void *)filp, cmdbuf_id);
+    pr_debug("filp=%p, VCMD Wait    CMDBUF [%d]\n", (void *)filp, cmdbuf_id);
     return 0;
   } else {
     if (check_mc_cmdbuf_irq(filp, cmdbuf_obj, irq_status_ret))
@@ -3142,7 +3142,7 @@ int hantrovcmd_init(struct platform_device *pdev)
   result = vcmd_init(pdev);
   if(result)
      goto err;
-  
+
   for (i = 0; i< total_vcmd_core_num; i++)
   {
     pr_info("vcmd: module init - vcmdcore[%d] addr =0x%llx\n",i,
@@ -3369,7 +3369,7 @@ void hantrovcmd_cleanup(struct platform_device *pdev)
     if (g_cmdbuf_obj_pool) {
       vfree(g_cmdbuf_obj_pool);
       g_cmdbuf_obj_pool = NULL;
-    } 
+    }
     if (g_cmdbuf_node_pool) {
       vfree(g_cmdbuf_node_pool);
       g_cmdbuf_node_pool = NULL;
