@@ -2496,14 +2496,20 @@ static int decoder_hantrodec_remove(struct platform_device *pdev)
     root_debugfs_dir = NULL;
   }
   pm_runtime_resume_and_get(&pdev->dev);
-	if(irq[0] > 0)
-	{
-		free_irq(irq[0],(void *) &hantrodec_data);
-	}
-	if(irq[1] > 0)
-	{
-		free_irq(irq[1],(void *) &hantrodec_data);
-	}
+  /* When vcmd is true, irq free  in hantrovcmd_cleanup!  
+    When vcmd is flase, it is not need because in line 2528 freed */
+  #if 0
+  if(!vcmd){ 
+    if(irq[0] > 0)
+    {
+      free_irq(irq[0],(void *) &hantrodec_data);
+    }
+    if(irq[1] > 0)
+    {
+      free_irq(irq[1],(void *) &hantrodec_data);
+    }
+  }
+  #endif
   hantrodec_t *dev = &hantrodec_data;
   int i, n =0;
   volatile u8* mmu_hwregs[MAX_SUBSYS_NUM][2];
