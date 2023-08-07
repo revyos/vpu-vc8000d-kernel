@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 #include "hantrodec.h"
 #include "dwl_defs.h"
 
@@ -1918,13 +1917,55 @@ void hantrodec_disable_clk(unsigned long value) {
 }
 #endif
 
+static int mmap_cmdbuf_mem(struct file *file, struct vm_area_struct *vma)
+{
+   size_t size = vma->vm_end - vma->vm_start;
+	 phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
+
+	/* Does it even fit in phys_addr_t? */
+	if (offset >> PAGE_SHIFT != vma->vm_pgoff)
+		return -EINVAL;
+
+	/* It's illegal to wrap around the end of the physical address space. */
+	if (offset + (phys_addr_t)size - 1 < offset)
+		return -EINVAL;
+
+
+	vma->vm_page_prot = phys_mem_access_prot(file, vma->vm_pgoff,
+						 size,
+						 vma->vm_page_prot);
+
+	/* Remap-pfn-range will mark the range VM_IO */
+	if (remap_pfn_range(vma,
+			    vma->vm_start,
+			    vma->vm_pgoff,
+			    size,
+			    vma->vm_page_prot)) {
+		return -EAGAIN;
+	}
+
+	return 0; 
+}
+
+static int mmap_mem(struct file *file, struct vm_area_struct *vma)
+{
+   size_t size = vma->vm_end - vma->vm_start;
+   phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
+
+   if (hantro_cmdbuf_range(offset,size)){
+      return mmap_cmdbuf_mem(file,vma); 
+   }else{
+      return allocator_mmap(file,vma);
+   }
+}
+
 /* VFS methods */
 static struct file_operations hantrodec_fops = {
   .owner = THIS_MODULE,
   .open = hantrodec_open,
   .release = hantrodec_release,
   .unlocked_ioctl = hantrodec_ioctl,
-  .mmap = allocator_mmap,
+  .mmap = mmap_mem,
   .fasync = NULL
 };
 
@@ -2094,7 +2135,7 @@ static int check_power_domain(void)
 	dn = of_find_node_by_name(NULL, "vdec");
 	if (dn != NULL)
 		info = of_find_property(dn, "power-domains", NULL);
-	pr_debug("%s, %d: power gating is %s\n", __func__, __LINE__, 
+	pr_info("%s, %d: power gating is %s\n", __func__, __LINE__,
 		(info == NULL) ? "disabled" : "enabled");
 	return (info == NULL) ? 0 : 1;
 }
@@ -2148,7 +2189,7 @@ static int decoder_runtime_resume(struct device *dev)
 			}
 			MMURestore(mmu_hwregs);
 		}
-		hantrovcmd_reset();
+		hantrovcmd_reset(false);
 	}
 
 	pr_debug("%s, %d: Enabled clock\n", __func__, __LINE__);
@@ -2156,6 +2197,27 @@ static int decoder_runtime_resume(struct device *dev)
 	return 0;
 }
 
+static int decoder_suspend(struct device *dev)
+{
+	pr_info("%s, %d: enter\n", __func__, __LINE__);
+	hantrovcmd_suspend_record();
+	/*pm_runtime_force_suspend will check current clk state*/
+	return pm_runtime_force_suspend(dev);
+
+}
+
+static int decoder_resume(struct device *dev)
+{
+	int ret;
+	ret = pm_runtime_force_resume(dev);
+	if (ret < 0)
+		return ret;
+
+	ret = hantrovcmd_resume_start();
+
+	pr_info("%s, %d: exit resume\n", __func__, __LINE__);
+	return ret;
+}
 static int decoder_hantrodec_probe(struct platform_device *pdev)
 {
   printk("enter %s\n",__func__);
@@ -2565,6 +2627,7 @@ static int decoder_hantrodec_remove(struct platform_device *pdev)
 
 
 static const struct dev_pm_ops decoder_runtime_pm_ops = {
+  SET_SYSTEM_SLEEP_PM_OPS(decoder_suspend, decoder_resume)
 	SET_RUNTIME_PM_OPS(decoder_runtime_suspend, decoder_runtime_resume, NULL)
 };
 
