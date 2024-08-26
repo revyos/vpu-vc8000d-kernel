@@ -63,7 +63,7 @@
 #include <linux/device.h>
 #include <linux/pagemap.h>
 #include <linux/sched.h>
-#include <stddef.h>
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0))
 #include <linux/dma-map-ops.h>
 #else
@@ -1071,6 +1071,11 @@ enum MMUStatus MMUInit(volatile unsigned char *hwregs) {
     status = MMU_STATUS_FALSE;
     goto onerror;
   } else {
+  #if defined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_DEVICE) || \
+    defined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU) || \
+    defined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU_ALL)
+    platformdev->dev.dma_coherent = 0; //For this device dma alloc coherent mem
+  #endif
     pr_info("Create platform device success\n");
   }
 
@@ -1425,7 +1430,7 @@ static enum MMUStatus MMUMemNodeMap(struct addr_desc *addr, struct file *filp) {
   page_count = (addr->size - 1)/PAGE_SIZE + 1;
 
   GetPhysicalAddress(addr->virtual_address, &address);
-  MMUDEBUG(" *****MMU map address*****%x\n", address);
+  MMUDEBUG(" *****MMU map address*****%llx phys_to_virt %lx\n", address,(unsigned long)phys_to_virt(address));
   if(address >= REGION_IN_START &&
      address + addr->size < REGION_IN_END)
     e = MMU_REGION_IN;
@@ -1505,7 +1510,7 @@ static enum MMUStatus MMUMemNodeMap(struct addr_desc *addr, struct file *filp) {
   MMUDEBUG(" MMU_MTLB_SHIFT %d MMU_STLB_4K_SHIFT %d\n", MMU_MTLB_SHIFT, MMU_STLB_4K_SHIFT);
   MMUDEBUG(" MMUMemNodeMap map total %d pages in region %d\nMTLB/STLB starts %d/%d, MTLB/STLB ends %d/%d\n",
              page_count, (u32)e, p->mtlb_start, p->stlb_start, p->mtlb_end, p->stlb_end);
-  MMUDEBUG(" MMUMemNodeMap map %p -> 0x%08x\n", addr->virtual_address, addr->bus_address);
+  MMUDEBUG(" MMUMemNodeMap map %px -> 0x%08x\n", addr->virtual_address, addr->bus_address);
 
   ReleaseMutex(g_mmu->page_table_mutex);
 

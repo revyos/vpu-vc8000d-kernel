@@ -146,6 +146,7 @@ struct vcmd_config {
 /* nothing */
 #elif defined(__linux__)
 int hantrovcmd_open(struct inode *inode, struct file *filp);
+int hantrovcmd_flush(struct file *filp, fl_owner_t id);
 int hantrovcmd_release(struct inode *inode, struct file *filp);
 long hantrovcmd_ioctl(struct file *filp,
                       unsigned int cmd, unsigned long arg);

@@ -100,6 +100,9 @@
 
 #include <linux/regulator/consumer.h>
 #include "dec_devfreq.h"
+#ifdef CONFIG_TH1520_SYSTEM_MONITOR
+#include <soc/xuantie/th1520_system_monitor.h>
+#endif
 
 #undef PDEBUG
 #ifdef HANTRODEC_DEBUG
@@ -1889,6 +1892,20 @@ static int hantrodec_open(struct inode *inode, struct file *filp) {
 
   return 0;
 }
+/*------------------------------------------------------------------------------
+ Function name   : hantrodec_flush
+ Description     : wait working hardware stop
+
+ Return type     : int
+------------------------------------------------------------------------------*/
+
+static int hantrodec_flush(struct file *filp, fl_owner_t id)
+{
+  if(vcmd)
+    return hantrovcmd_flush(filp,id);
+  else
+    return 0;
+}
 
 /*------------------------------------------------------------------------------
  Function name   : hantrodec_release
@@ -1948,6 +1965,20 @@ void hantrodec_disable_clk(unsigned long value) {
 }
 #endif
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 4, 0)
+static pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
+			      unsigned long size, pgprot_t vma_prot)
+{
+	if (!pfn_valid(pfn)) {
+		return pgprot_noncached(vma_prot);
+	} else if (file->f_flags & O_SYNC) {
+		return pgprot_writecombine(vma_prot);
+	}
+
+	return vma_prot;
+}
+#endif
+
 static int mmap_cmdbuf_mem(struct file *file, struct vm_area_struct *vma)
 {
    size_t size = vma->vm_end - vma->vm_start;
@@ -1994,6 +2025,7 @@ static int mmap_mem(struct file *file, struct vm_area_struct *vma)
 static struct file_operations hantrodec_fops = {
   .owner = THIS_MODULE,
   .open = hantrodec_open,
+  .flush = hantrodec_flush,
   .release = hantrodec_release,
   .unlocked_ioctl = hantrodec_ioctl,
   .mmap = mmap_mem,
@@ -2166,6 +2198,7 @@ platform register
 
 static const struct of_device_id isp_of_match[] = {
 	{ .compatible = "thead,light-vc8000d",  },
+	{ .compatible = "xuantie,th1520-vc8000d",  },
 	{ /* sentinel */  },
 };
 
@@ -2348,7 +2381,7 @@ void decoder_devfreq_record_busy(struct decoder_devfreq *devfreq)
     decoder_dev_clk_lock();
     spin_lock_irqsave(&devfreq->lock, irqflags);
     busy_count = devfreq->busy_count;
-    //pr_info("record_busy:busy_count = %d\n",busy_count);
+    PDEBUG("record_busy:busy_count = %d\n",busy_count);
     if(devfreq->busy_count > 0)
     { 
         devfreq->busy_count++;
@@ -2376,7 +2409,7 @@ void decoder_devfreq_record_idle(struct decoder_devfreq *devfreq)
     if (!devfreq)
       return;
     spin_lock_irqsave(&devfreq->lock, irqflags);
-    //pr_info("record_idle:busy_count = %d\n",devfreq->busy_count);
+    PDEBUG("record_idle:busy_count = %d\n",devfreq->busy_count);
     if(devfreq->busy_count > 1)
     { 
       devfreq->busy_count--;
@@ -2554,9 +2587,20 @@ static struct devfreq_dev_profile decoder_devfreq_gov_data =
     .get_cur_freq = decoder_devfreq_get_cur_freq,
 };
 
+#ifdef CONFIG_TH1520_SYSTEM_MONITOR
+static struct monitor_dev_profile decoder_dev_monitor = {
+	.type = MONITOR_TPYE_DEV,
+};
+#endif
+
 void decoder_devfreq_fini(struct device *dev)
 {
     struct decoder_devfreq *devfreq = decoder_get_devfreq_priv_data();
+#ifdef CONFIG_TH1520_SYSTEM_MONITOR
+    if(devfreq->mdev_info)
+      th1520_system_monitor_unregister(devfreq->mdev_info);
+#endif
+
     if (devfreq->df) {
         devm_devfreq_remove_device(dev, devfreq->df);
         devfreq->df = NULL;
@@ -2566,10 +2610,15 @@ void decoder_devfreq_fini(struct device *dev)
         dev_pm_opp_of_remove_table(dev);
         devfreq->opp_of_table_added = false;
     }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
     if (devfreq->clkname_opp_table) {
         dev_pm_opp_put_clkname(devfreq->clkname_opp_table);
         devfreq->clkname_opp_table = NULL;
     }
+#else
+    if(devfreq->token >= 0)
+        dev_pm_opp_put_clkname(devfreq->token);
+#endif
     mutex_destroy(&devfreq->clk_mutex);
 }
 
@@ -2581,12 +2630,13 @@ int decoder_devfreq_init(struct device *dev)
     int ret = 0;
     struct decoder_devfreq *devfreq = decoder_get_devfreq_priv_data();
     
-    memset(devfreq,sizeof(struct decoder_devfreq),0);
+    memset(devfreq,0,sizeof(struct decoder_devfreq));
     spin_lock_init(&devfreq->lock);
     init_waitqueue_head(&devfreq->target_freq_wait_queue);
     mutex_init(&devfreq->clk_mutex);
 
 #ifdef CONFIG_PM_DEVFREQ
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
     opp_table = dev_pm_opp_set_clkname(dev,"cclk");
     if(IS_ERR(opp_table)) {
         pr_err("dec set cclk failed\n");
@@ -2594,6 +2644,14 @@ int decoder_devfreq_init(struct device *dev)
 		    goto err_fini;
     }
     devfreq->clkname_opp_table = opp_table;
+#else
+    devfreq->token = dev_pm_opp_set_clkname(dev,"cclk");
+    if (devfreq->token < 0) {
+        pr_err("enc set cclk failed\n");
+        ret = devfreq->token;
+        goto err_fini;
+    }
+#endif
 
     ret = dev_pm_opp_of_add_table(dev);
     if(ret) {
@@ -2623,15 +2681,32 @@ int decoder_devfreq_init(struct device *dev)
         ret = PTR_ERR(df);
         goto err_fini;
     }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0)
     unsigned long *freq_table = df->profile->freq_table;
     if (freq_table[0] < freq_table[df->profile->max_state - 1]) {
         devfreq->max_freq = freq_table[df->profile->max_state - 1];
     } else {
         devfreq->max_freq  = freq_table[0];
     }
+#else
+    unsigned long *freq_table = df->freq_table;
+    if (freq_table[0] < freq_table[df->max_state - 1]) {
+        devfreq->max_freq = freq_table[df->max_state - 1];
+    } else {
+        devfreq->max_freq  = freq_table[0];
+    }
+#endif
     pr_info("device max freq %ld\n",devfreq->max_freq);
     df->suspend_freq = 0; // not set freq when suspend,not suitable for async set rate
     devfreq->df = df;
+
+#ifdef CONFIG_TH1520_SYSTEM_MONITOR
+    decoder_dev_monitor.data = devfreq->df;
+    devfreq->mdev_info = th1520_system_monitor_register(dev, &decoder_dev_monitor);
+    if (IS_ERR(devfreq->mdev_info))
+      devfreq->mdev_info = NULL;
+#endif
+
 #endif
 #endif
     return 0;
@@ -2907,8 +2982,11 @@ static int decoder_hantrodec_probe(struct platform_device *pdev)
             goto err;
         }
     }
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
     hantrodec_class = class_create(THIS_MODULE, "hantrodec");
+#else
+    hantrodec_class = class_create("hantrodec");
+#endif
     if (IS_ERR(hantrodec_class))
     {
         printk(KERN_ERR "%s, %d: class_create error!\n", __func__, __LINE__);

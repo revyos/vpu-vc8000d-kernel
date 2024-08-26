@@ -63,6 +63,7 @@
 #include <linux/dma-buf.h>
 #include <linux/mm_types.h>
 #include <linux/version.h>
+#include <linux/module.h>
 #include "kernel_allocator.h"
 
 
@@ -412,8 +413,11 @@ Mmap(
     struct mem_block *memBlk = MemBlk;
     int status = 0;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
     vma->vm_flags |= VM_FLAGS;
-
+#else
+    vm_flags_set(vma,VM_FLAGS);
+#endif
     /* Make this mapping non-cached. */
     vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 
@@ -1240,10 +1244,15 @@ int allocator_init(struct device *dev)
 void allocator_remove(void)
 {
 }
-
+#define ALLOCTOR_IN_THIS_KO 0
 int allocator_open(struct inode *inode, struct file *filp)
 {
     int ret = 0;
+    /*we are not using this alloctor,vidmem is using
+     MUST be match with allocator_release(),otherwise caused
+     memleak of mem in this function allocted.
+    */
+#if ALLOCTOR_IN_THIS_KO
     struct file_node *fnode = NULL;
     
     if (AllocateMemory(sizeof(struct file_node), (void * *)&fnode))
@@ -1254,13 +1263,13 @@ int allocator_open(struct inode *inode, struct file *filp)
     spin_lock(&mem_lock);
     list_add_tail(&fnode->link, &fileList);
     spin_unlock(&mem_lock);
-
+#endif
     return ret;
 }
 
 void allocator_release(struct inode *inode, struct file *filp)
 {
-#if 0
+#if ALLOCTOR_IN_THIS_KO
     struct file_node *fnode = find_and_delete_file_node(filp);
     struct mem_node *node;
     struct mem_node *temp;
@@ -1284,3 +1293,4 @@ void allocator_release(struct inode *inode, struct file *filp)
     FreeMemory(fnode);
 #endif
 }
+MODULE_IMPORT_NS(DMA_BUF);
